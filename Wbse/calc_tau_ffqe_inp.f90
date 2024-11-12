@@ -17,20 +17,18 @@ SUBROUTINE calc_tau_ffqe_inp()
   USE kinds,                ONLY : DP
   USE pwcom,                ONLY : isk,npw,ngk
   USE wavefunctions,        ONLY : evc
-  USE io_global,            ONLY : stdout
   USE westcom,              ONLY : lrwfc,iuwfc,ev,dvg,n_pdep_eigen_to_use,npwqx,nbnd_occ,l_pdep,&
-                                 & spin_channel,l_bse
+                                 & spin_channel,l_bse,l_qeff
   USE lsda_mod,             ONLY : nspin
   USE pdep_db,              ONLY : pdep_db_read
   USE mp,                   ONLY : mp_bcast
   USE mp_global,            ONLY : my_image_id,inter_image_comm
-  USE wbse_dv,              ONLY : wbse_dv_setup
   USE buffers,              ONLY : get_buffer
   USE class_idistribute,    ONLY : idistribute
   USE distribution_center,  ONLY : pert,kpt_pool
-  USE qbox_interface,       ONLY : init_qbox,finalize_qbox
+  USE wbse_dv,              ONLY : wbse_dv_setup
 #if defined(__CUDA)
-  USE wavefunctions_gpum,   ONLY : using_evc,using_evc_d
+  USE west_gpu,             ONLY : allocate_gpu,deallocate_gpu
 #endif
   !
   IMPLICIT NONE
@@ -41,7 +39,15 @@ SUBROUTINE calc_tau_ffqe_inp()
   INTEGER :: nbndval
   LOGICAL :: spin_resolve
   !
+#if defined(__CUDA)
+  IF(.NOT. l_pdep) CALL errore('calc_tau','GPU not implemented for FF_QE_INP',1)
+  !
+  CALL allocate_gpu()
+#endif
+  !
   CALL wbse_dv_setup(.FALSE.)
+  !
+  spin_resolve = spin_channel > 0 .AND. nspin > 1
   !
   DO iks = 1,kpt_pool%nloc
      !
@@ -52,17 +58,17 @@ SUBROUTINE calc_tau_ffqe_inp()
      IF(kpt_pool%nloc > 1) THEN
         IF(my_image_id == 0) CALL get_buffer(evc,lrwfc,iuwfc,iks)
         CALL mp_bcast(evc,0,inter_image_comm)
-        !
-#if defined(__CUDA)
-        CALL using_evc(2)
-        CALL using_evc_d(0)
-#endif
+        !$acc update device(evc)
      ENDIF
      !
      CALL calc_tau_ffkc(current_spin,nbndval)
      CALL calc_tau_ffqe(current_spin,nbndval)
      !
   ENDDO
+  !
+#if defined(__CUDA)
+  CALL deallocate_gpu()
+#endif
   !
 END SUBROUTINE
 !
@@ -96,7 +102,6 @@ SUBROUTINE calc_tau_ffkc(current_spin,nbndval)
   USE bar,                  ONLY : bar_type,start_bar_type,update_bar_type,stop_bar_type
   USE wbse_dv,              ONLY : wbse_dv_setup,wbse_dv_of_drho
 #if defined(__CUDA)
-  USE wavefunctions_gpum,   ONLY : evc_work=>evc_d,psic=>psic_d
   USE west_gpu,             ONLY : allocate_gpu,deallocate_gpu
 #else
   USE wavefunctions,        ONLY : evc_work=>evc,psic
@@ -324,7 +329,6 @@ SUBROUTINE calc_tau_ffqe(current_spin,nbndval)
   USE bar,                  ONLY : bar_type,start_bar_type,update_bar_type,stop_bar_type
   USE wbse_dv,              ONLY : wbse_dv_setup,wbse_dv_of_drho
 #if defined(__CUDA)
-  USE wavefunctions_gpum,   ONLY : evc_work=>evc_d,psic=>psic_d
   USE west_gpu,             ONLY : allocate_gpu,deallocate_gpu
 #else
   USE wavefunctions,        ONLY : evc_work=>evc,psic
