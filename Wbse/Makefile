@@ -23,6 +23,7 @@ WBSE_OBJS = \
 bse_kernel.o \
 build_rhs_zvector_eq.o \
 calc_tau.o \
+calc_tau_ffqe_inp.o \
 check_ovl_wfc.o \
 hybrid_kernel.o \
 lanczos_restart.o \
@@ -62,7 +63,7 @@ WESTLIBS = \
 
 TLDEPS = bindir mods pwlibs pw
 
-all : title tldeps wbse.x wbse_init.x libwbse.a
+all : title tldeps wbse.x wbse_init.x wbse_ffqe_inp.x libwbse.a
 
 wbse.x : wbse.o $(WBSE_OBJS) $(WESTLIBS) $(PWOBJS) $(QEMODS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(QELIBS) $(PYT_LDFLAGS)
@@ -71,6 +72,10 @@ wbse.x : wbse.o $(WBSE_OBJS) $(WESTLIBS) $(PWOBJS) $(QEMODS)
 wbse_init.x : wbse_init.o $(WBSE_OBJS) $(WESTLIBS) $(PWOBJS) $(QEMODS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(QELIBS) $(PYT_LDFLAGS)
 	- ( cd ../../bin ; ln -fs ../West/Wbse/wbse_init.x . )
+
+wbse_ffqe_inp.x : wbse_ffqe_inp.o $(WBSE_OBJS) $(WESTLIBS) $(PWOBJS) $(QEMODS)
+	$(LD) $(LDFLAGS) -o $@ $^ $(QELIBS) $(PYT_LDFLAGS)
+	- ( cd ../../bin ; ln -fs ../West/Wbse/wbse_ffqe_inp.x . )
 
 tldeps :
 	test -n "$(TLDEPS)" && ( cd ../.. ; $(MAKE) $(MFLAGS) $(TLDEPS) || exit 1) || :
@@ -81,7 +86,7 @@ libwbse.a : $(WBSE_OBJS)
 
 clean :
 	- /bin/rm -f *.x *.o *.a *~ *_tmp.f90 *.d *.mod *.i *.L
-	- /bin/rm -f ../../bin/wbse.x ../../bin/wbse_init.x
+	- /bin/rm -f ../../bin/wbse.x ../../bin/wbse_init.x ../../bin/wbse_ffqe_inp.x
 
 title :
 	@echo

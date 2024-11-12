@@ -298,6 +298,7 @@ MODULE wbse_init_center
   INTEGER :: n_trunc_bands
   LOGICAL :: l_local_repr
   LOGICAL :: l_pdep
+  LOGICAL :: l_qeff
   !
   ! Common workspace
   !

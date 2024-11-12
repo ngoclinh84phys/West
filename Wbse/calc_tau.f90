@@ -18,7 +18,7 @@ SUBROUTINE calc_tau()
   USE pwcom,                ONLY : isk,npw,ngk
   USE wavefunctions,        ONLY : evc
   USE westcom,              ONLY : lrwfc,iuwfc,ev,dvg,n_pdep_eigen_to_use,npwqx,nbnd_occ,l_pdep,&
-                                 & spin_channel,l_bse
+                                 & spin_channel,l_bse,l_qeff
   USE lsda_mod,             ONLY : nspin
   USE pdep_db,              ONLY : pdep_db_read
   USE mp,                   ONLY : mp_bcast
@@ -55,7 +55,11 @@ SUBROUTINE calc_tau()
         !
         CALL pdep_db_read(n_pdep_eigen_to_use)
      ELSE
-        CALL init_qbox()
+        !
+        IF (.NOT.l_qeff) THEN
+           CALL init_qbox()
+        ENDIF
+        !
      ENDIF
   ENDIF
   !
@@ -84,7 +88,9 @@ SUBROUTINE calc_tau()
         DEALLOCATE(dvg)
         DEALLOCATE(ev)
      ELSE
-        CALL finalize_qbox()
+        IF(.NOT. l_qeff) THEN
+          CALL finalize_qbox()
+        ENDIF
      ENDIF
   ENDIF
   !
@@ -106,8 +112,10 @@ SUBROUTINE calc_tau_single_q(current_spin,nbndval)
   USE io_push,              ONLY : io_push_title
   USE types_coulomb,        ONLY : pot3D
   USE westcom,              ONLY : ev,dvg,wbse_init_calculation,wbse_init_save_dir,l_bse,l_pdep,&
-                                 & chi_kernel,l_local_repr,overlap_thr,n_trunc_bands
-  USE fft_base,             ONLY : dffts
+                                 & chi_kernel,l_local_repr,overlap_thr,n_trunc_bands, l_qeff
+  USE gvect,                ONLY : ngm
+  USE fft_base,             ONLY : dffts,dfftp
+  USE fft_interfaces,       ONLY : fwfft,invfft
   USE noncollin_module,     ONLY : npol
   USE pwcom,                ONLY : npw,npwx,lsda
   USE pdep_io,              ONLY : pdep_merge_and_write_G
@@ -136,7 +144,7 @@ SUBROUTINE calc_tau_single_q(current_spin,nbndval)
   !
   INTEGER :: ibnd,jbnd,ibnd_g,jbnd_g,tmp_size
   INTEGER :: il1,ig1,ir,do_idx
-  INTEGER :: iu,ig,ierr,ip,ip_g
+  INTEGER :: iu,ig,ierr,ip,ip_g,is
   INTEGER :: nbnd_do
   INTEGER :: dffts_nnr
   REAL(DP) :: factor
@@ -148,7 +156,7 @@ SUBROUTINE calc_tau_single_q(current_spin,nbndval)
   !
   REAL(DP), ALLOCATABLE :: dotp(:)
   REAL(DP), ALLOCATABLE :: aux_rr(:)
-  COMPLEX(DP), ALLOCATABLE :: aux_r(:),aux1_r(:,:),aux1_g(:)
+  COMPLEX(DP), ALLOCATABLE :: aux_r(:),aux1_r(:,:),aux1_g(:),aux2_g(:,:),aux2_r(:)
   REAL(DP), ALLOCATABLE :: frspin(:,:)
   !
   CHARACTER(LEN=:), ALLOCATABLE :: lockfile
@@ -242,6 +250,8 @@ SUBROUTINE calc_tau_single_q(current_spin,nbndval)
   !
   IF(l_pdep) THEN
      CALL io_push_title('Applying CHI kernel with PDEP')
+  ELSEIF (l_qeff) THEN
+     CALL io_push_title('Applying '//TRIM(chi_kernel)//' kernel with FF_QE')
   ELSE
      CALL io_push_title('Applying '//TRIM(chi_kernel)//' kernel with FF_Qbox')
   ENDIF
@@ -337,6 +347,61 @@ SUBROUTINE calc_tau_single_q(current_spin,nbndval)
                  tau(ig) = tau(ig)+aux1_g(ig)*pot3D%sqvc(ig)
               ENDDO
               !$acc end parallel
+              !
+           ELSEIF(l_qeff) THEN
+              !
+              ALLOCATE(aux1_r(dffts%nnr,nspin))
+              ALLOCATE(aux_rr(dffts%nnr))
+              !
+              ! READ RESPONSES FROM QE FF
+              !
+              WRITE(ilabel,'(i6.6)') ibnd_g
+              WRITE(jlabel,'(i6.6)') jbnd_g
+              WRITE(slabel,'(i1)') current_spin
+              fname = 'ResdensPertpotBSE'//ilabel//'_'//jlabel//'_'//slabel
+              !
+              ALLOCATE (aux2_g(ngm, nspin))
+              CALL read_rho_xml_ff(aux2_g, fname)
+              !
+              ALLOCATE(aux2_r(dffts%nnr))
+              aux_rr(:) = 0.0_DP
+              DO is = 1, nspin
+                 aux2_r(dfftp%nl(:)) = aux2_g(:,is)
+                 aux2_r(dfftp%nlm(:)) = CONJG(aux2_r(dfftp%nl(:)))
+                 CALL invfft('Rho', aux2_r, dfftp)
+                 aux_rr(:) = aux_rr(:) + DBLE(aux2_r(:))
+              ENDDO
+              DEALLOCATE(aux2_g, aux2_r)
+              !
+              DO ir = 1,dffts%nnr
+                 aux_r(ir) = CMPLX(aux_rr(ir),KIND=DP)
+              ENDDO
+              ! 
+              aux1_r(:,:) = (0._DP,0._DP)
+              aux1_r(:,current_spin) = aux_r
+              !
+              ! aux1_r = vc*aux1_r()
+              !
+              IF(l_xcchi) THEN
+                 CALL wbse_dv_of_drho(aux1_r,.FALSE.,.FALSE.)
+              ELSE
+                 CALL wbse_dv_of_drho(aux1_r,.TRUE.,.FALSE.)
+              ENDIF
+              !
+              aux_r(:) = aux1_r(:,current_spin)
+              !
+              ! aux_r -> aux_g
+              !
+#if !defined(__CUDA)
+              CALL single_fwfft_gamma(dffts,npw,npwx,aux_r,aux1_g,'Wave')
+#endif
+              !
+              ! vc + vc/fxc X vc
+              !
+              tau(:) = tau+aux1_g
+              !
+              DEALLOCATE(aux1_r)
+              DEALLOCATE(aux_rr)
               !
            ELSE
               !

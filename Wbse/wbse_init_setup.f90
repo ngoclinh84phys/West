@@ -15,7 +15,7 @@ SUBROUTINE wbse_init_setup()
   !-----------------------------------------------------------------------
   !
   USE westcom,              ONLY : solver,l_bse,bse_method,l_pdep,localization,l_local_repr,&
-                                 & l_use_ecutrho,wbse_init_save_dir,l_hybrid_tddft
+                                 & l_use_ecutrho,wbse_init_save_dir,l_hybrid_tddft, l_qeff
   USE kinds,                ONLY : DP
   USE types_coulomb,        ONLY : pot3D
   USE mp_global,            ONLY : npool,nbgrp
@@ -51,11 +51,24 @@ SUBROUTINE wbse_init_setup()
   SELECT CASE(TRIM(bse_method))
   CASE('PDEP','pdep')
      l_pdep = .TRUE.
+     l_qeff = .FALSE.
+  CASE('FF_QE','FF_qe','ff_qe')
+     l_qeff = .TRUE.
+     l_pdep = .FALSE.
   CASE('FF_QBOX','FF_Qbox','ff_qbox')
      l_pdep = .FALSE.
+     l_qeff = .FALSE.
   END SELECT
   !
-  IF(.NOT. l_pdep) THEN
+  IF(.NOT. l_pdep .AND. .NOT. l_qeff) THEN
+     IF(npool > 1) CALL errore('wbse_init_setup','pools not implemented for FF_Qbox',1)
+     IF(nbgrp > 1) CALL errore('wbse_init_setup','band groups not implemented for FF_Qbox',1)
+#if defined(__CUDA)
+     CALL errore('wbse_init_setup','GPU not implemented for FF_Qbox',1)
+#endif
+  ENDIF
+  !
+  IF(l_qeff) THEN
      IF(npool > 1) CALL errore('wbse_init_setup','pools not implemented for FF_Qbox',1)
      IF(nbgrp > 1) CALL errore('wbse_init_setup','band groups not implemented for FF_Qbox',1)
 #if defined(__CUDA)
